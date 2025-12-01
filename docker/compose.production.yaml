@@ -1,6 +1,81 @@
-# services:
-  # backend:
+version: "3.9"
 
-  # gateway:
+services:
+  mongo:
+    env_file:
+      - ../.env
+    image: mongo:6.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
-  # mongo:
+  backend:
+    env_file:
+      - ../.env
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BACKEND_PORT: ${BACKEND_PORT:-3847}
+      MONGO_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017
+      MONGO_DATABASE: ${MONGO_DATABASE}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3847/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  gateway:
+    env_file:
+      - ../.env
+    build:
+      context: ../gateway
+      dockerfile: Dockerfile
+      target: prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      GATEWAY_PORT: ${GATEWAY_PORT:-5921}
+      BACKEND_URL: http://backend:${BACKEND_PORT:-3847}
+    ports:
+      - "${GATEWAY_PORT:-5921}:5921"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5921/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+    deploy: # resource limits (effective in Swarm or compatible runtimes)
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: "256M"
+
+volumes:
+  mongo-data:
+
+networks:
+  backend:
+    driver: bridge
